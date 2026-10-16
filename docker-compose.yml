@@ -1,0 +1,38 @@
+# Runs the whole app: PostgreSQL + the Next.js server.
+#   docker compose up -d --build
+# For local development you can start only the database:
+#   docker compose up -d db
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-posttally}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-posttally}
+    ports:
+      # Only reachable from this machine. Remove this line on a server if the app is the only client.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Inside Docker the database is reached by its service name, not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-posttally}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-posttally}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

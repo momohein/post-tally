@@ -1,0 +1,46 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+enum PostType {
+  REGISTERED
+  EXPRESS
+  PARCEL
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(STAFF)
+  createdAt    DateTime @default(now())
+  posts        Post[]
+}
+
+model Post {
+  id             String   @id @default(cuid())
+  // Unique so the same item scanned twice is never counted twice.
+  // Null when an item has no tracking number.
+  trackingNumber String?  @unique
+  type           PostType
+  address        String?
+  // Calendar day in APP_TIMEZONE (YYYY-MM-DD), used for daily totals.
+  day            String
+  scannedAt      DateTime @default(now())
+  scannedById    String
+  scannedBy      User     @relation(fields: [scannedById], references: [id])
+
+  @@index([day])
+}
