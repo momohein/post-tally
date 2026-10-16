@@ -1,11 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
-import { dayOf, isDay } from "@/lib/day";
+import { dayOf, isDay, TZ } from "@/lib/day";
 import { postInclude, toDTO, type PostDTO } from "@/lib/posts";
 
 export const dynamic = "force-dynamic";
-
-const TZ = process.env.APP_TIMEZONE || "Europe/Dublin";
 const cell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
 /** GET /api/posts/export?day=YYYY-MM-DD — the day's records as a CSV download. */
