@@ -18,7 +18,14 @@ export const authOptions: NextAuthOptions = {
         const email = credentials?.email?.trim().toLowerCase();
         const password = credentials?.password;
         if (!email || !password) return null;
-        const user = await prisma.user.findUnique({ where: { email } });
+        let user;
+        try {
+          user = await prisma.user.findUnique({ where: { email } });
+        } catch (e) {
+          // Shown on the login page, so a bad DATABASE_URL isn't mistaken for a wrong password.
+          console.error("Login: database unreachable", e);
+          throw new Error("DatabaseUnavailable");
+        }
         if (!user) return null;
         const ok = await bcrypt.compare(password, user.passwordHash);
         if (!ok) return null;
