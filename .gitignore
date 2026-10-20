@@ -5,3 +5,6 @@ out
 .env.local
 *.tsbuildinfo
 npm-debug.log*
+.DS_Store
+.idea
+.vercel

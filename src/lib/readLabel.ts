@@ -1,26 +1,26 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { cleanTracking, trackingProblem } from "./classify";
+import { classify, cleanTracking, SERVICES, type Service } from "./classify";
 
-// The service (registered / express / parcel) is chosen by staff before the photo,
-// so the model only reads the tracking number and the delivery address.
 const PROMPT = `This is a photo of one postal item (letter, envelope or parcel) at a post office counter.
 Read its label and reply with ONLY a JSON object, no other text:
-{"tracking_number": string or null, "address": string or null}
+{"tracking_number": string or null, "service": "registered" | "express" | "parcel" | "unknown", "address": string or null}
 Rules:
-- tracking_number: the tracking number printed beside or under the barcode. It is always two letters, nine digits, then two letters, often printed with spaces like "RL 7827 3725 8IE". The same number may be printed several times; read the clearest copy. Return it without spaces, e.g. "RL782737258IE". null if none is visible.
-- address: the DELIVERY (recipient, "To:") address only, never the sender's. Copy it as written, lines separated by \\n. null if it can't be read.`;
+- tracking_number: the tracking/barcode number printed on the item, usually 2 letters + 9 digits + 2-letter country code (e.g. RR123456789IE). Copy it exactly with no spaces. null if none is visible.
+- service: from the tracking number's first letter if present (R = registered, E = express, C or V = parcel); otherwise from words on the item ("Registered", "Express", "Parcel") or a large box. "unknown" if unclear.
+- address: the DELIVERY (recipient) address only, not the sender's, lines separated by \\n. null if not readable.`;
 
 const Reply = z.object({
   tracking_number: z.string().nullable().optional(),
+  service: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
 });
 
 export type LabelReading = {
   trackingNumber: string;
+  type: Service | null;
   address: string;
-  /** Null when the tracking number has the right format and passes the check digit. */
-  trackingProblem: string | null;
+  missing: string[];
 };
 
 export class LabelReadError extends Error {
@@ -30,7 +30,7 @@ export class LabelReadError extends Error {
 }
 
 let client: Anthropic | null = null;
-function getClient() {
+export function getClient() {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new LabelReadError("Label reading isn't set up on this server. Type the details in.", 503);
   }
@@ -39,7 +39,7 @@ function getClient() {
 }
 
 /** Pull the first {...} block out of the model's reply and parse it. */
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end <= start) throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
@@ -68,14 +68,22 @@ export async function readLabel(
     ],
   });
 
-  const text = message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+  const text = message.content
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("");
   const parsed = Reply.safeParse(parseJson(text));
   if (!parsed.success) throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
 
   const trackingNumber = cleanTracking(parsed.data.tracking_number);
-  return {
-    trackingNumber,
-    address: (parsed.data.address ?? "").trim(),
-    trackingProblem: trackingProblem(trackingNumber),
-  };
+  const address = (parsed.data.address ?? "").trim();
+  // The tracking-number rule wins; fall back to what the model saw on the label.
+  const modelService = SERVICES.find((s) => s === parsed.data.service) ?? null;
+  const type = classify(trackingNumber) ?? modelService;
+
+  const missing: string[] = [];
+  if (!trackingNumber) missing.push("tracking number");
+  if (!address) missing.push("address");
+  if (!type) missing.push("service");
+
+  return { trackingNumber, type, address, missing };
 }

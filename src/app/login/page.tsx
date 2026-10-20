@@ -16,7 +16,7 @@ export default function LoginPage() {
     const res = await signIn("credentials", { email, password, redirect: false });
     setBusy(false);
     if (res?.ok && !res.error) window.location.href = "/";
-    else if (!res?.error || res.error === "CredentialsSignin") setError("Email or password is wrong. Ask your admin if you need a login.");
+    else if (!res?.error || res.error === "CredentialsSignin") setError("Email or password is wrong.");
     else if (res.error === "DatabaseUnavailable") setError("Sign-in can't reach the database. Check DATABASE_URL in the server settings.");
     else setError(`Sign-in isn't set up correctly on the server (${res.error}). Check NEXTAUTH_SECRET and NEXTAUTH_URL.`);
   }
@@ -40,6 +40,9 @@ export default function LoginPage() {
         <button className="btn primary" type="submit" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
+        <div className="authswitch">
+          New here? <a href="/register">Create an account</a>
+        </div>
       </form>
     </main>
   );

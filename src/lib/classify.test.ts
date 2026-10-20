@@ -1,38 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkDigitOk, cleanTracking, formatTracking, isTrackingFormat, trackingProblem } from "./classify.ts";
+import { classify, cleanTracking, s10CheckOk } from "./classify.ts";
 
 test("cleans spaces and case", () => {
-  assert.equal(cleanTracking(" rl 7827 3725 8ie "), "RL782737258IE");
+  assert.equal(cleanTracking(" rr 123-456-789 ie "), "RR123456789IE");
 });
 
-test("fixes letters misread as digits in the middle only", () => {
-  assert.equal(cleanTracking("RL 78O7 3725 8IE"), "RL780737258IE");
-  assert.equal(cleanTracking("LL 1234 5678 9IE"), "LL123456789IE");
+test("classifies by S10 prefix", () => {
+  assert.equal(classify("RR123456789IE"), "registered");
+  assert.equal(classify("EE123456789IE"), "express");
+  assert.equal(classify("CP123456789IE"), "parcel");
+  assert.equal(classify("VA123456789IE"), "parcel");
 });
 
-test("accepts every two-letter prefix", () => {
-  for (const t of ["RL782737258IE", "LL123456789IE", "CN123456789IE", "LR123456789IE"]) {
-    assert.equal(isTrackingFormat(t), true, t);
+test("returns null for unknown or malformed numbers", () => {
+  assert.equal(classify("LX123456789IE"), null);
+  assert.equal(classify("RR12345IE"), null);
+  assert.equal(classify(""), null);
+  assert.equal(classify(null), null);
+});
+
+test("S10 check digit", () => {
+  // Real numbers from an An Post certificate of posting.
+  for (const t of ["RL 0637 9041 5IE", "RL063790407IE", "RL063790398IE", "RL063790384IE", "RL063790866IE"]) {
+    assert.equal(s10CheckOk(t), true, t);
   }
-  assert.equal(isTrackingFormat("RL12345678IE"), false);
-  assert.equal(isTrackingFormat("R1123456789IE"), false);
-});
-
-test("check digit: real label passes, one wrong digit fails", () => {
-  assert.equal(checkDigitOk("RL782737258IE"), true);
-  assert.equal(checkDigitOk("RL782737268IE"), false);
-  // 10 -> 0 and 11 -> 5 cases
-  assert.equal(checkDigitOk("RR000000005IE"), true); // sum 0 -> 11 -> 5
-});
-
-test("problems are explained", () => {
-  assert.equal(trackingProblem("RL782737258IE"), null);
-  assert.match(trackingProblem("")!, /No tracking/);
-  assert.match(trackingProblem("RL123IE")!, /2 letters, 9 digits/);
-  assert.match(trackingProblem("RL782737268IE")!, /check-digit/);
-});
-
-test("formats like the label", () => {
-  assert.equal(formatTracking("RL782737258IE"), "RL 7827 3725 8IE");
+  assert.equal(s10CheckOk("RL063790416IE"), false); // last digit misread
+  assert.equal(s10CheckOk("RL063790415"), false); // not S10
 });

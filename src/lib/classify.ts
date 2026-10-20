@@ -1,64 +1,51 @@
 export type Service = "registered" | "express" | "parcel";
 export const SERVICES: Service[] = ["registered", "express", "parcel"];
 
-/**
- * Normalise a tracking number: upper-case, no spaces or dashes.
- * "rl 7827 3725 8ie" -> "RL782737258IE".
- * In the 9-digit middle, letters that are common misreads of digits are corrected
- * (O->0, I/L->1, S->5, B->8, Z->2), since only digits are valid there.
- */
+/** Upper-case and strip spaces/dashes: "rr 123 456 789 ie" -> "RR123456789IE". */
 export function cleanTracking(input: string | null | undefined): string {
-  let t = (input ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (t.length === 13) {
-    const middle = t
-      .slice(2, 11)
-      .replace(/O/g, "0")
-      .replace(/[IL]/g, "1")
-      .replace(/S/g, "5")
-      .replace(/B/g, "8")
-      .replace(/Z/g, "2");
-    t = t.slice(0, 2) + middle + t.slice(11);
-  }
-  return t;
+  return (input ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-/** Two letters, nine digits, two letters (UPU S10), e.g. RL782737258IE. */
-export function isTrackingFormat(t: string): boolean {
-  return /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(t);
+/** True for a UPU S10 number: 2 letters, 9 digits, 2-letter country code. */
+export function isS10(tracking: string): boolean {
+  return /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(tracking);
 }
 
 /**
- * S10 check digit: the 9th digit is computed from the first 8.
- * Weights 8 6 4 2 3 5 9 7; check = 11 - (sum mod 11), with 10 -> 0 and 11 -> 5.
- * A failed check almost always means one digit was misread.
+ * True when the S10 check digit (the 9th digit) matches the first 8.
+ * Catches most single-digit misreads, e.g. "RL063790415IE" passes.
  */
-export function checkDigitOk(t: string): boolean {
-  if (!isTrackingFormat(t)) return false;
+export function s10CheckOk(tracking: string): boolean {
+  const t = cleanTracking(tracking);
+  if (!isS10(t)) return false;
   const weights = [8, 6, 4, 2, 3, 5, 9, 7];
-  let sum = 0;
-  for (let i = 0; i < 8; i++) sum += Number(t.charAt(2 + i)) * weights[i];
+  const sum = weights.reduce((acc, w, i) => acc + w * Number(t[2 + i]), 0);
   let check = 11 - (sum % 11);
   if (check === 10) check = 0;
-  else if (check === 11) check = 5;
-  return check === Number(t.charAt(10));
+  if (check === 11) check = 5;
+  return check === Number(t[10]);
 }
 
-/** What's wrong with a cleaned tracking number, in staff-facing words, or null if it looks right. */
-export function trackingProblem(t: string): string | null {
-  if (!t) return "No tracking number was found.";
-  if (!isTrackingFormat(t)) {
-    return "Tracking numbers are 2 letters, 9 digits, then 2 letters, like RL 7827 3725 8IE.";
+/**
+ * Service from the S10 prefix's first letter:
+ * R = registered, E = express (EMS), C or V = parcel.
+ * Returns null when the number is not S10 or the prefix is not one of these.
+ * Check which prefixes your post office's domestic labels use and adjust here.
+ */
+export function classify(input: string | null | undefined): Service | null {
+  const t = cleanTracking(input);
+  if (!isS10(t)) return null;
+  switch (t[0]) {
+    case "R":
+      return "registered";
+    case "E":
+      return "express";
+    case "C":
+    case "V":
+      return "parcel";
+    default:
+      return null;
   }
-  if (!checkDigitOk(t)) {
-    return "This number fails the check-digit test, so a digit is probably misread. Compare it with the label.";
-  }
-  return null;
-}
-
-/** Show a number the way it's printed on the label: "RL 7827 3725 8IE". */
-export function formatTracking(t: string): string {
-  if (!isTrackingFormat(t)) return t;
-  return `${t.slice(0, 2)} ${t.slice(2, 6)} ${t.slice(6, 10)} ${t.slice(10)}`;
 }
 
 export function toDbType(s: Service): "REGISTERED" | "EXPRESS" | "PARCEL" {

@@ -27,6 +27,23 @@ model User {
   role         Role     @default(STAFF)
   createdAt    DateTime @default(now())
   posts        Post[]
+  lists        PostingList[]
+}
+
+/// One company's Certificate of Posting sheet, photographed and saved as a batch.
+model PostingList {
+  id          String   @id @default(cuid())
+  // Customer (sender) name and address from the top of the sheet.
+  sender      String?
+  // Post office id from src/lib/offices.ts, e.g. "ringsend".
+  office      String
+  day         String
+  scannedAt   DateTime @default(now())
+  scannedById String
+  scannedBy   User     @relation(fields: [scannedById], references: [id])
+  posts       Post[]
+
+  @@index([office, day])
 }
 
 model Post {
@@ -36,11 +53,17 @@ model Post {
   trackingNumber String?  @unique
   type           PostType
   address        String?
+  // Post office id from src/lib/offices.ts, e.g. "ringsend".
+  office         String
   // Calendar day in APP_TIMEZONE (YYYY-MM-DD), used for daily totals.
   day            String
   scannedAt      DateTime @default(now())
   scannedById    String
   scannedBy      User     @relation(fields: [scannedById], references: [id])
+  // Set when the item came from a company's posting list.
+  listId         String?
+  list           PostingList? @relation(fields: [listId], references: [id], onDelete: Cascade)
 
-  @@index([day])
+  @@index([office, day])
+  @@index([listId])
 }

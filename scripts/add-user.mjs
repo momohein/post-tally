@@ -19,10 +19,6 @@ if (!email || !name || !password) {
   console.error('Usage: npm run add-user -- --email you@example.com --name "Your Name" --password "secret" [--admin]');
   process.exit(1);
 }
-if (password.length < 10) {
-  console.error("Use a password of at least 10 characters.");
-  process.exit(1);
-}
 
 const prisma = new PrismaClient();
 try {
