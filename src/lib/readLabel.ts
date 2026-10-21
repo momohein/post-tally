@@ -4,7 +4,7 @@ import { classify, cleanTracking, SERVICES, type Service } from "./classify";
 
 const PROMPT = `This is a photo of one postal item (letter, envelope or parcel) at an An Post counter.
 The photo may be sideways or upside down; read the labels in whatever direction they face.
-Read the item and call the record_label tool.
+Read the item and report what you find.
 
 - tracking_number: the tracking number printed beside the barcode, e.g. "LL 2766 4606 9IE" or "RR123456789IE":
   2 letters + 9 digits + 2-letter country code. Copy it exactly with no spaces. Empty string if none is visible.
@@ -128,7 +128,58 @@ export function parseJson(text: string): unknown {
   }
 }
 
-/** The structured result: the forced tool call's input, or JSON found in any text as a fallback. */
+type Tool = { name: string; description: string; input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[] } };
+
+/**
+ * Ask the model to answer through `tool`. The tool is offered, not forced: some models reject a forced
+ * tool_choice. If a model refuses tools altogether, ask again for the same fields as plain JSON text.
+ */
+export async function askStructured(opts: {
+  model: string;
+  maxTokens: number;
+  tool: Tool;
+  imageBase64: string;
+  mediaType: "image/jpeg" | "image/png" | "image/webp";
+  prompt: string;
+}): Promise<{ message: Anthropic.Message; result: unknown }> {
+  const image = { type: "image" as const, source: { type: "base64" as const, media_type: opts.mediaType, data: opts.imageBase64 } };
+  try {
+    const message = await getClient().messages.create({
+      model: opts.model,
+      max_tokens: opts.maxTokens,
+      tools: [opts.tool],
+      tool_choice: { type: "auto" },
+      messages: [{ role: "user", content: [image, { type: "text", text: `${opts.prompt}\n\nAnswer by calling the ${opts.tool.name} tool.` }] }],
+    });
+    return { message, result: resultOf(message, opts.tool.name) };
+  } catch (e) {
+    const err = e as { status?: unknown; message?: unknown };
+    if (!(err?.status === 400 && /tool/i.test(String(err?.message ?? "")))) throw apiProblem(e, opts.model) ?? e;
+  }
+  try {
+    const message = await getClient().messages.create({
+      model: opts.model,
+      max_tokens: opts.maxTokens,
+      messages: [
+        {
+          role: "user",
+          content: [
+            image,
+            {
+              type: "text",
+              text: `${opts.prompt}\n\nReply with ONLY a JSON object (no other text) with these fields: ${JSON.stringify(opts.tool.input_schema.properties)}`,
+            },
+          ],
+        },
+      ],
+    });
+    return { message, result: resultOf(message, opts.tool.name) };
+  } catch (e) {
+    throw apiProblem(e, opts.model) ?? e;
+  }
+}
+
+/** The structured result: the tool call's input, or JSON found in any text as a fallback. */
 export function resultOf(message: Anthropic.Message, toolName: string): unknown {
   const call = message.content.find((b) => b.type === "tool_use" && b.name === toolName);
   if (call && call.type === "tool_use") return call.input;
@@ -141,27 +192,8 @@ const FAST_MODEL = () => process.env.CLAUDE_MODEL || "claude-haiku-5-5";
 const STRONG_MODEL = () => process.env.CLAUDE_LIST_MODEL || "claude-sonnet-5-5";
 
 async function readWith(model: string, imageBase64: string, mediaType: "image/jpeg" | "image/png" | "image/webp") {
-  let message: Anthropic.Message;
-  try {
-    message = await getClient().messages.create({
-      model,
-      max_tokens: 800,
-      tools: [TOOL],
-      tool_choice: { type: "tool", name: TOOL.name },
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
-            { type: "text", text: PROMPT },
-          ],
-        },
-      ],
-    });
-  } catch (e) {
-    throw apiProblem(e, model) ?? e;
-  }
-  const parsed = Reply.safeParse(resultOf(message, TOOL.name));
+  const { message, result } = await askStructured({ model, maxTokens: 800, tool: TOOL, imageBase64, mediaType, prompt: PROMPT });
+  const parsed = Reply.safeParse(result);
   if (!parsed.success) {
     console.error(`read-label (${model}): unexpected reply`, JSON.stringify(message.content).slice(0, 1500));
     return null;

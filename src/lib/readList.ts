@@ -1,7 +1,6 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { classify, cleanTracking, isS10, s10CheckOk, SERVICES, type Service } from "./classify";
-import { apiProblem, getClient, looseText, resultOf, LabelReadError } from "./readLabel";
+import { askStructured, looseText, LabelReadError } from "./readLabel";
 
 const PROMPT = `This is a photo of a post office posting list, such as An Post's "Registered post – Certificate of posting"
 or "Express post – Certificate of posting". A company hands in several registered or express items with it. Each item has its own
@@ -10,9 +9,10 @@ The number of filled rows varies from page to page (it may be 3, 6, 7, 10 ...); 
 The photo may be at an angle or sideways.
 
 Your most important job is to COUNT THE TRACKING STICKERS CORRECTLY and read each tracking number exactly.
-Reading the recipient's handwritten name and address is secondary: if it is hard to read, leave it empty.
+The handwritten names and addresses do NOT matter for counting: if any handwriting is unclear, leave name and address
+empty and move on. Never leave out a row because its handwriting is unclear.
 
-Call the record_list tool with:
+Report:
 - items: exactly one entry per row that has a tracking number sticker (or a printed/written tracking number), in row order.
   Do NOT include rows without a tracking number, even if something is handwritten there. Do not skip any row that has a sticker.
 - line: the printed row number (1, 2, 3 ...).
@@ -97,28 +97,9 @@ export async function readList(
 ): Promise<ListReading> {
   // Handwriting on a full sheet needs a stronger model than a single label.
   const model = process.env.CLAUDE_LIST_MODEL || "claude-sonnet-5-5";
-  let message: Anthropic.Message;
-  try {
-  message = await getClient().messages.create({
-    model,
-    max_tokens: 4000,
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: TOOL.name },
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
-          { type: "text", text: PROMPT },
-        ],
-      },
-    ],
-  });
-  } catch (e) {
-    throw apiProblem(e, model) ?? e;
-  }
+  const { message, result } = await askStructured({ model, maxTokens: 4000, tool: TOOL, imageBase64, mediaType, prompt: PROMPT });
 
-  const parsed = Reply.safeParse(resultOf(message, TOOL.name));
+  const parsed = Reply.safeParse(result);
   if (!parsed.success) {
     console.error("read-list: unexpected reply", JSON.stringify(message.content).slice(0, 1500));
     throw new LabelReadError("The list couldn't be read clearly. Try a sharper, straight-on photo.");
