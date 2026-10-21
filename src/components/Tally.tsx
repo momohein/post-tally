@@ -14,20 +14,49 @@ type Draft = { trackingNumber: string; type: Service | null; address: string };
 const EMPTY: Draft = { trackingNumber: "", type: null, address: "" };
 const LABEL: Record<Service, string> = { registered: "Registered", express: "Express", parcel: "Parcel" };
 
-/** Shrink a phone photo to at most `max` px on its long side as JPEG before upload. */
-async function shrink(file: File, max = 1600): Promise<Blob> {
+/** Load a photo for drawing: createImageBitmap where it works, otherwise an <img> (older iPhones/iPads). */
+async function loadImage(file: File): Promise<{ img: CanvasImageSource; w: number; h: number }> {
   try {
     const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    return { img: bmp, w: bmp.width, h: bmp.height };
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return { img, w: img.naturalWidth, h: img.naturalHeight };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
+/**
+ * Shrink a phone photo to at most `max` px on its long side as JPEG before upload,
+ * so it stays well under the server's upload limit and in a format the reader accepts.
+ */
+async function shrink(file: File, max = 1600): Promise<Blob> {
+  try {
+    const { img, w, h } = await loadImage(file);
+    const scale = Math.min(1, max / Math.max(w, h));
     const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bmp.width * scale);
-    canvas.height = Math.round(bmp.height * scale);
-    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
     return blob ?? file;
   } catch {
     return file;
   }
+}
+
+/** The server's error message, or a plain one when the reply isn't JSON (e.g. the host rejected a huge upload). */
+function errorText(res: Response, json: { error?: string }, fallback: string) {
+  if (json.error) return json.error;
+  if (res.status === 413) return "That photo is too large to send. Take it again a little further away.";
+  if (res.status === 504) return "Reading took too long. Try again.";
+  return `${fallback} (error ${res.status})`;
 }
 
 /** Why a list line needs checking, judged on the phone as staff edit it. */
@@ -146,11 +175,15 @@ export default function Tally({ today, user }: Props) {
       body.append("image", await shrink(file), "label.jpg");
       const res = await fetch("/api/read-label", { method: "POST", body, signal: ctl.signal });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) return openForm(EMPTY, json.error ?? "Reading failed. Type the details in.");
+      if (!res.ok) return openForm(EMPTY, errorText(res, json, "Reading failed. Type the details in"));
       const missing: string[] = json.missing ?? [];
       openForm(
         { trackingNumber: json.trackingNumber ?? "", type: json.type ?? null, address: json.address ?? "" },
-        missing.length ? `Couldn't read the ${missing.join(" or ")}. Fill in what's missing.` : "",
+        missing.length
+          ? `Couldn't read the ${missing.join(" or ")}. Fill in what's missing.`
+          : json.address
+            ? ""
+            : "Address couldn't be read — that's fine, you can save without it.",
       );
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -207,7 +240,7 @@ export default function Tally({ today, user }: Props) {
       body.append("image", await shrink(file, 2400), "list.jpg");
       const res = await fetch("/api/read-list", { method: "POST", body, signal: ctl.signal });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) return fail(json.error ?? "Reading failed. Try another photo.");
+      if (!res.ok) return fail(errorText(res, json, "Reading failed. Try another photo"));
       const rows: ListRow[] = (json.items ?? []).map((it: Omit<ListRow, "key">) => ({ ...it, key: ++rowKey }));
       setListSender(json.sender ?? "");
       setListRows(rows);

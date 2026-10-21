@@ -54,12 +54,45 @@ export class LabelReadError extends Error {
   }
 }
 
+/** Turn an Anthropic API failure into a message staff and admins can act on. */
+export function apiProblem(e: unknown, model: string): LabelReadError | null {
+  // Checked by name and status rather than instanceof, which can miss when two copies of the SDK are loaded.
+  const err = e as { name?: string; status?: unknown; message?: unknown } | null;
+  const name = err?.name ?? "";
+  if (name === "APIConnectionTimeoutError") return new LabelReadError("Reading took too long. Try again.", 504);
+  if (name === "APIConnectionError") return new LabelReadError("The server couldn't reach the label reader. Try again.", 502);
+  const status = typeof err?.status === "number" ? err.status : undefined;
+  if (status === undefined) return null;
+  const msg = String(err?.message ?? "").toLowerCase();
+  switch (status) {
+    case 401:
+      return new LabelReadError("Label reading is off: the ANTHROPIC_API_KEY setting isn't valid. An admin needs to update it in Vercel.", 503);
+    case 403:
+      return new LabelReadError("The ANTHROPIC_API_KEY isn't allowed to read photos. Check the key in console.anthropic.com.", 503);
+    case 404:
+      return new LabelReadError(`The reading model "${model}" wasn't found. Check the CLAUDE_MODEL setting.`, 503);
+    case 413:
+      return new LabelReadError("That photo is too large. Try again.", 413);
+    case 400:
+      if (msg.includes("credit")) return new LabelReadError("The Anthropic account is out of credit. Add credit at console.anthropic.com.", 503);
+      if (msg.includes("image")) return new LabelReadError("That photo couldn't be opened. Take it again.", 400);
+      return new LabelReadError(`The label reader refused the request (${String(err?.message).slice(0, 120)}).`, 502);
+    case 429:
+    case 529:
+      return new LabelReadError("The label reader is busy. Try again in a moment.", 503);
+    default:
+      return status >= 500 ? new LabelReadError("The label reader had a problem. Try again in a moment.", 502) : null;
+  }
+}
+
 let client: Anthropic | null = null;
 export function getClient() {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new LabelReadError("Label reading isn't set up on this server. Type the details in.", 503);
   }
-  client ??= new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
+  // Trim stray spaces or quotes pasted around the key in the hosting settings.
+  const apiKey = process.env.ANTHROPIC_API_KEY.trim().replace(/^["']+|["']+$/g, "");
+  client ??= new Anthropic({ apiKey, maxRetries: 2, timeout: 45_000 });
   return client;
 }
 
@@ -103,41 +136,63 @@ export function resultOf(message: Anthropic.Message, toolName: string): unknown 
   return parseJson(text);
 }
 
+const FAST_MODEL = () => process.env.CLAUDE_MODEL || "claude-haiku-5-5";
+/** Stronger model used for a second try when the fast one can't find the tracking number. */
+const STRONG_MODEL = () => process.env.CLAUDE_LIST_MODEL || "claude-sonnet-5-5";
+
+async function readWith(model: string, imageBase64: string, mediaType: "image/jpeg" | "image/png" | "image/webp") {
+  let message: Anthropic.Message;
+  try {
+    message = await getClient().messages.create({
+      model,
+      max_tokens: 800,
+      tools: [TOOL],
+      tool_choice: { type: "tool", name: TOOL.name },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
+            { type: "text", text: PROMPT },
+          ],
+        },
+      ],
+    });
+  } catch (e) {
+    throw apiProblem(e, model) ?? e;
+  }
+  const parsed = Reply.safeParse(resultOf(message, TOOL.name));
+  if (!parsed.success) {
+    console.error(`read-label (${model}): unexpected reply`, JSON.stringify(message.content).slice(0, 1500));
+    return null;
+  }
+  return parsed.data;
+}
+
 export async function readLabel(
   imageBase64: string,
   mediaType: "image/jpeg" | "image/png" | "image/webp",
 ): Promise<LabelReading> {
-  const message = await getClient().messages.create({
-    model: process.env.CLAUDE_MODEL || "claude-haiku-5-5",
-    max_tokens: 800,
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: TOOL.name },
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
-          { type: "text", text: PROMPT },
-        ],
-      },
-    ],
-  });
-
-  const parsed = Reply.safeParse(resultOf(message, TOOL.name));
-  if (!parsed.success) {
-    console.error("read-label: unexpected reply", JSON.stringify(message.content).slice(0, 1500));
-    throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
+  // Fast model first; if it misses the tracking number (blurry, sideways, messy), try the stronger model once.
+  let data = await readWith(FAST_MODEL(), imageBase64, mediaType);
+  if (!data || !classify(data.tracking_number)) {
+    try {
+      const second = await readWith(STRONG_MODEL(), imageBase64, mediaType);
+      if (second && (cleanTracking(second.tracking_number) || !data)) data = second;
+    } catch (e) {
+      if (!data) throw e;
+    }
   }
+  if (!data) throw new LabelReadError("The label couldn't be read. Type the tracking number in.");
 
-  const trackingNumber = cleanTracking(parsed.data.tracking_number);
-  const address = (parsed.data.address ?? "").trim();
+  const trackingNumber = cleanTracking(data.tracking_number);
+  const address = (data.address ?? "").trim();
   // The tracking-number rule wins; fall back to what the model saw on the label.
-  const modelService = SERVICES.find((s) => s === parsed.data.service) ?? null;
+  const modelService = SERVICES.find((s) => s === data.service) ?? null;
   const type = classify(trackingNumber) ?? modelService;
 
   const missing: string[] = [];
   if (!trackingNumber) missing.push("tracking number");
-  if (!address) missing.push("address");
   if (!type) missing.push("service");
 
   return { trackingNumber, type, address, missing };

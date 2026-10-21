@@ -1,6 +1,7 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { classify, cleanTracking, isS10, s10CheckOk, SERVICES, type Service } from "./classify";
-import { getClient, looseText, resultOf, LabelReadError } from "./readLabel";
+import { apiProblem, getClient, looseText, resultOf, LabelReadError } from "./readLabel";
 
 const PROMPT = `This is a photo of a post office posting list, such as An Post's "Registered post – Certificate of posting"
 or "Express post – Certificate of posting". A company hands in several registered or express items with it. Each item has its own
@@ -94,9 +95,12 @@ export async function readList(
   imageBase64: string,
   mediaType: "image/jpeg" | "image/png" | "image/webp",
 ): Promise<ListReading> {
-  const message = await getClient().messages.create({
-    // Handwriting on a full sheet needs a stronger model than a single label.
-    model: process.env.CLAUDE_LIST_MODEL || "claude-sonnet-5-5",
+  // Handwriting on a full sheet needs a stronger model than a single label.
+  const model = process.env.CLAUDE_LIST_MODEL || "claude-sonnet-5-5";
+  let message: Anthropic.Message;
+  try {
+  message = await getClient().messages.create({
+    model,
     max_tokens: 4000,
     tools: [TOOL],
     tool_choice: { type: "tool", name: TOOL.name },
@@ -110,6 +114,9 @@ export async function readList(
       },
     ],
   });
+  } catch (e) {
+    throw apiProblem(e, model) ?? e;
+  }
 
   const parsed = Reply.safeParse(resultOf(message, TOOL.name));
   if (!parsed.success) {
