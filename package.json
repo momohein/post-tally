@@ -12,7 +12,8 @@
     "test": "node --test --experimental-strip-types src/lib/classify.test.ts",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
-    "add-user": "node scripts/add-user.mjs"
+    "add-user": "node scripts/add-user.mjs",
+    "make-admin": "node scripts/make-admin.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.128.0",
