@@ -3,6 +3,7 @@ import { currentUser } from "@/lib/auth";
 import { dayOf, isDay, TZ } from "@/lib/day";
 import { postInclude, toDTO, type PostDTO } from "@/lib/posts";
 import { isOffice, officeName } from "@/lib/offices";
+import { bagName } from "@/lib/bags";
 
 export const dynamic = "force-dynamic";
 const cell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -24,9 +25,9 @@ export async function GET(req: Request) {
   const time = (iso: string) =>
     new Intl.DateTimeFormat("en-IE", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
   const lines = [
-    ["Office", "Time", "Tracking number", "Service", "Address", "Scanned by", "From list"].join(","),
+    ["Office", "Bag", "Time", "Tracking number", "Service", "Address", "Scanned by", "From list"].join(","),
     ...rows.map((r) =>
-      [officeName(r.office), time(r.scannedAt), r.trackingNumber, r.type, (r.address ?? "").replace(/\n/g, ", "), r.scannedBy, r.listId ? (r.listSender || "Company list").split("\n")[0] : ""]
+      [officeName(r.office), bagName(r.type, r.bag), time(r.scannedAt), r.trackingNumber, r.type, (r.address ?? "").replace(/\n/g, ", "), r.scannedBy, r.listId ? (r.listSender || "Company list").split("\n")[0] : ""]
         .map(cell)
         .join(","),
     ),

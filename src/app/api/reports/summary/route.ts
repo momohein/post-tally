@@ -6,6 +6,7 @@ import { isOffice, officeName } from "@/lib/offices";
 import { dayLabelOf } from "@/lib/dayPdf";
 import { recipients } from "@/lib/report";
 import { groupByCompany } from "@/lib/companies";
+import { bagName, groupByBag } from "@/lib/bags";
 import { fromDbType } from "@/lib/classify";
 
 export const dynamic = "force-dynamic";
@@ -21,12 +22,23 @@ export async function GET(req: Request) {
   if (!isOffice(office)) return NextResponse.json({ error: "Choose your post office first." }, { status: 400 });
   const q = params.get("day");
   const day = isDay(q) ? q : dayOf();
-  const rows = await prisma.post.findMany({ where: { office, day }, select: { office: true, type: true, listId: true, trackingNumber: true, scannedAt: true, list: { select: { sender: true } } },
+  const rows = await prisma.post.findMany({ where: { office, day }, select: { office: true, type: true, bag: true, listId: true, trackingNumber: true, scannedAt: true, list: { select: { sender: true } } },
     orderBy: { scannedAt: "asc" },
   });
-  const companies = groupByCompany(
-    rows.map((r) => ({ listId: r.listId, listSender: r.list?.sender ?? "", trackingNumber: r.trackingNumber, type: fromDbType(r.type) })),
-  );
+  const items = rows.map((r) => ({
+    listId: r.listId,
+    listSender: r.list?.sender ?? "",
+    trackingNumber: r.trackingNumber,
+    type: fromDbType(r.type),
+    bag: r.bag,
+  }));
+  const bags = groupByBag(items).map((g) => ({
+    type: g.type,
+    bag: g.bag,
+    name: bagName(g.type, g.bag),
+    count: g.rows.length,
+    companies: groupByCompany(g.rows),
+  }));
 
   const count = (t: string) => rows.filter((r) => r.type === t).length;
   const summary = {
@@ -45,6 +57,6 @@ export async function GET(req: Request) {
     to: await recipients(),
     emailReady: Boolean(process.env.SMTP_USER && process.env.SMTP_PASS),
     office: summary,
-    companies,
+    bags,
   });
 }

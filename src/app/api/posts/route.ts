@@ -6,6 +6,7 @@ import { cleanTracking, SERVICES, toDbType } from "@/lib/classify";
 import { dayOf, isDay } from "@/lib/day";
 import { postInclude, toDTO, type PostDTO } from "@/lib/posts";
 import { isOffice, OFFICE_IDS } from "@/lib/offices";
+import { closedBags, currentBag, currentBags } from "@/lib/bags";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,8 @@ export async function GET(req: Request) {
   const posts: PostDTO[] = rows.map(toDTO);
   const totals = { registered: 0, express: 0, parcel: 0 };
   posts.forEach((p) => totals[p.type]++);
-  return NextResponse.json({ office, day, today: dayOf(), totals, posts });
+  const [bags, closed] = await Promise.all([currentBags(office, day), closedBags(office, day)]);
+  return NextResponse.json({ office, day, today: dayOf(), totals, posts, currentBags: bags, closedBags: closed });
 }
 
 const Body = z.object({
@@ -58,11 +60,14 @@ export async function POST(req: Request) {
   }
 
   const now = new Date();
+  const service = parsed.data.type as (typeof SERVICES)[number];
+  const bag = await currentBag(parsed.data.office, dayOf(now), service);
   const data = {
     trackingNumber,
     type: toDbType(parsed.data.type as (typeof SERVICES)[number]),
     address: parsed.data.address.trim() || null,
     office: parsed.data.office,
+    bag,
     day: dayOf(now),
     scannedAt: now,
     scannedById: user.id,

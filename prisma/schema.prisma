@@ -28,6 +28,22 @@ model User {
   createdAt    DateTime @default(now())
   posts        Post[]
   lists        PostingList[]
+  bagCloses    BagClose[]
+}
+
+/// A bag that was closed (full) at an office on a day. Registered, express and parcel bags are numbered
+/// separately; the open bag for a service is one more than its last closed bag.
+model BagClose {
+  id         String   @id @default(cuid())
+  office     String
+  day        String
+  type       PostType
+  number     Int
+  closedAt   DateTime @default(now())
+  closedById String
+  closedBy   User     @relation(fields: [closedById], references: [id])
+
+  @@unique([office, day, type, number])
 }
 
 /// One company's Certificate of Posting sheet, photographed and saved as a batch.
@@ -55,6 +71,8 @@ model Post {
   address        String?
   // Post office id from src/lib/offices.ts, e.g. "ringsend".
   office         String
+  // Bag number for this item's service that day (Registered bag 1, 2 ... / Express bag 1, 2 ...).
+  bag            Int      @default(1)
   // Calendar day in APP_TIMEZONE (YYYY-MM-DD), used for daily totals.
   day            String
   scannedAt      DateTime @default(now())

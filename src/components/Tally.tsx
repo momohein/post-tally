@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import { classify, cleanTracking, isS10, s10CheckOk, SERVICES, type Service } from "@/lib/classify";
 import type { PostDTO } from "@/lib/posts";
+import { BAGGED, bagName, groupByBag, isBagged, type ClosedBag } from "@/lib/bagNames";
 import { isOffice, OFFICES, officeName, type OfficeId } from "@/lib/offices";
 
 type Props = { today: string; user: { id: string; name: string; role: "ADMIN" | "STAFF" } };
@@ -80,6 +81,11 @@ export default function Tally({ today, user }: Props) {
   const [office, setOfficeState] = useState<OfficeId | null | undefined>(undefined);
   const [choosingOffice, setChoosingOffice] = useState(false);
   const [posts, setPosts] = useState<PostDTO[] | null>(null);
+  const [bags, setBags] = useState<Record<Service, number>>({ registered: 1, express: 1, parcel: 1 });
+  const [closed, setClosed] = useState<ClosedBag[]>([]);
+  const [showAllBags, setShowAllBags] = useState(false);
+  const [confirmClose, setConfirmClose] = useState<Service | null>(null);
+  const [bagBusy, setBagBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [mode, setMode] = useState<Mode>("start");
   const [thumb, setThumb] = useState<string | null>(null);
@@ -122,6 +128,8 @@ export default function Tally({ today, user }: Props) {
       if (!res.ok) throw new Error();
       const json = await res.json();
       setPosts(json.posts);
+      if (json.currentBags) setBags(json.currentBags);
+      setClosed(json.closedBags ?? []);
       setLoadError("");
     } catch {
       setLoadError("Couldn't load records. Check your connection and reload.");
@@ -210,7 +218,7 @@ export default function Tally({ today, user }: Props) {
         return;
       }
       const saved: PostDTO = json.post;
-      setStatus({ text: `${json.replaced ? "Replaced" : "Saved"} ${saved.trackingNumber ?? "item"} as ${saved.type}.` });
+      setStatus({ text: `${json.replaced ? "Replaced" : "Saved"} ${saved.trackingNumber ?? "item"} in ${bagName(saved.type, saved.bag)}.` });
       reset();
       if (day !== today) setDay(today);
       else office && load(today, office);
@@ -299,7 +307,9 @@ export default function Tally({ today, user }: Props) {
         return setListNote(json.error ?? "Couldn't save the list. Try again.");
       }
       const who = listSender.split("\n")[0];
-      setStatus({ text: `Saved ${json.count} ${listType} post${json.count === 1 ? "" : "s"}${who ? ` from ${who}` : ""}.` });
+      setStatus({
+        text: `Saved ${json.count} ${listType} post${json.count === 1 ? "" : "s"}${who ? ` from ${who}` : ""} in ${bagName(listType, json.bag ?? 1)}.`,
+      });
       reset();
       if (day !== today) setDay(today);
       else office && load(today, office);
@@ -330,7 +340,7 @@ export default function Tally({ today, user }: Props) {
     to: string[];
     emailReady: boolean;
     office: OfficeSum;
-    companies: { name: string; type: Service; count: number; tracking: string[] }[];
+    bags: { type: Service; bag: number; name: string; count: number; companies: { name: string; type: Service; count: number; tracking: string[] }[] }[];
   };
   const [summary, setSummary] = useState<Summary | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -374,6 +384,32 @@ export default function Tally({ today, user }: Props) {
     }
   }
 
+  async function changeBag(type: Service, action: "close" | "reopen") {
+    if (!office) return;
+    const n = bags[type];
+    if (action === "close" && confirmClose !== type) return setConfirmClose(type);
+    setConfirmClose(null);
+    setBagBusy(true);
+    try {
+      const res = await fetch("/api/bags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ office, type, action, bag: action === "close" ? n : n - 1 }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) setStatus({ text: json.error ?? "Couldn't change the bag.", err: true });
+      else if (action === "close")
+        setStatus({ text: `${bagName(type, n)} closed with ${json.count} item${json.count === 1 ? "" : "s"}. Now filling ${bagName(type, n + 1)}.` });
+      else setStatus({ text: `${bagName(type, n - 1)} reopened.` });
+      setShowAllBags(false);
+      await load(day, office);
+    } catch {
+      setStatus({ text: "Couldn't change the bag. Check your connection.", err: true });
+    } finally {
+      setBagBusy(false);
+    }
+  }
+
   async function remove(id: string) {
     if (confirmDelete !== id) return setConfirmDelete(id);
     setConfirmDelete(null);
@@ -385,14 +421,32 @@ export default function Tally({ today, user }: Props) {
     office && load(day, office);
   }
 
-  // Company lists in this day's log, newest first.
-  const lists: { id: string; sender: string; type: Service; count: number; scannedAt: string; scannedBy: string; scannedById: string }[] = [];
-  posts?.forEach((p) => {
-    if (!p.listId) return;
-    const l = lists.find((x) => x.id === p.listId);
-    if (l) l.count++;
-    else lists.push({ id: p.listId, sender: p.listSender ?? "", type: p.type, count: 1, scannedAt: p.scannedAt, scannedBy: p.scannedBy, scannedById: p.scannedById });
-  });
+  // Company lists among some records, newest first.
+  type ListEntry = { id: string; sender: string; type: Service; count: number; scannedAt: string; scannedBy: string; scannedById: string };
+  function listsOf(ps: PostDTO[]): ListEntry[] {
+    const out: ListEntry[] = [];
+    ps.forEach((p) => {
+      if (!p.listId) return;
+      const l = out.find((x) => x.id === p.listId);
+      if (l) l.count++;
+      else out.push({ id: p.listId, sender: p.listSender ?? "", type: p.type, count: 1, scannedAt: p.scannedAt, scannedBy: p.scannedBy, scannedById: p.scannedById });
+    });
+    return out;
+  }
+  const isToday = day === today;
+  // Today shows the open bags only (a fresh page per bag); "Show all bags" or a past day shows everything by bag.
+  const viewAll = !isToday || showAllBags;
+  const inOpenBag = (p: PostDTO) => !isBagged(p.type) || p.bag === bags[p.type];
+  const visible = (posts ?? []).filter((p) => viewAll || inOpenBag(p));
+  const groups: { key: string; title: string | null; rows: PostDTO[] }[] = viewAll
+    ? groupByBag(visible).map((g) => ({
+        key: `${g.type}-${g.bag}`,
+        title: `${bagName(g.type, g.bag)} · ${g.rows.length} item${g.rows.length === 1 ? "" : "s"}`,
+        rows: g.rows,
+      }))
+    : visible.length
+      ? [{ key: "open", title: null, rows: visible }]
+      : [];
   const flaggedRows = listRows.filter((r) => r.problem).length;
 
   const dayLabel =
@@ -466,6 +520,45 @@ export default function Tally({ today, user }: Props) {
           {count} item{count === 1 ? "" : "s"} recorded
         </div>
       </section>
+
+      {isToday && (
+        <section className="card bags" aria-label="Bags">
+          <h2>Bags</h2>
+          {BAGGED.map((t) => {
+            const n = bags[t];
+            const inBag = (posts ?? []).filter((p) => p.type === t && p.bag === n).length;
+            const done = closed.filter((c) => c.type === t);
+            return (
+              <div key={t} className={`bagrow ${t}`}>
+                <div className="baginfo">
+                  <b>{bagName(t, n)}</b>
+                  <span>
+                    {inBag} item{inBag === 1 ? "" : "s"} in this bag
+                  </span>
+                  {done.length > 0 && (
+                    <span className="closedlist">Closed: {done.map((c) => `Bag ${c.number} (${c.count})`).join(" · ")}</span>
+                  )}
+                </div>
+                <div className="bagactions">
+                  <button
+                    type="button"
+                    className={confirmClose === t ? "btn primary small" : "btn ghost small"}
+                    disabled={inBag === 0 || bagBusy}
+                    onClick={() => changeBag(t, "close")}
+                  >
+                    {confirmClose === t ? `Tap again to close Bag ${n}` : `Bag full: start Bag ${n + 1}`}
+                  </button>
+                  {inBag === 0 && done.length > 0 && (
+                    <button type="button" className="linkbtn" disabled={bagBusy} onClick={() => changeBag(t, "reopen")}>
+                      Reopen Bag {n - 1}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       <section className="card" aria-label="Record an item">
         <h2>Record an item</h2>
@@ -688,7 +781,12 @@ export default function Tally({ today, user }: Props) {
 
       <section style={{ display: "grid", gap: 10 }} aria-label="Records for this day">
         <div className="loghead">
-          <h2>{dayLabel}</h2>
+          <h2>{isToday && !showAllBags ? "Open bags" : dayLabel}</h2>
+          {isToday && closed.length > 0 && (
+            <button className="linkbtn" type="button" onClick={() => setShowAllBags((v) => !v)}>
+              {showAllBags ? "Show open bags only" : "Show all bags"}
+            </button>
+          )}
           {count > 0 && (
             <div className="exports">
               <a className="btn primary small" href={`/api/posts/export/pdf?office=${office}&day=${day}&size=label`} target="_blank" rel="noopener">
@@ -751,22 +849,29 @@ export default function Tally({ today, user }: Props) {
                     </tr>
                   </tbody>
                 </table>
-                {summary.companies.length > 0 && (
+                {summary.bags.length > 0 && (
                   <div className="companies">
-                    <h3>Company lists</h3>
-                    {summary.companies.map((c) => (
-                      <div key={c.name + c.type} className="company">
+                    {summary.bags.map((b) => (
+                      <div key={b.type + b.bag} className="company">
                         <div className="companyhead">
-                          <b>{c.name}</b>
-                          <span className={c.type}>
-                            {c.count} {c.type}
+                          <b>{b.name}</b>
+                          <span className={b.type}>
+                            {b.count} item{b.count === 1 ? "" : "s"}
                           </span>
                         </div>
-                        <ol className="tracklist">
-                          {c.tracking.map((t) => (
-                            <li key={t}>{t}</li>
-                          ))}
-                        </ol>
+                        {b.companies.map((c) => (
+                          <div key={c.name} className="bagcompany">
+                            <div className="companyhead">
+                              <span className="cname">{c.name}</span>
+                              <span className={c.type}>{c.count}</span>
+                            </div>
+                            <ol className="tracklist">
+                              {c.tracking.map((t) => (
+                                <li key={t}>{t}</li>
+                              ))}
+                            </ol>
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </div>
@@ -793,9 +898,36 @@ export default function Tally({ today, user }: Props) {
             )}
           </div>
         )}
-        {lists.length > 0 && (
-          <ul className="items lists" aria-label="Company lists">
-            {lists.map((l) => {
+        {loadError && (
+          <ul className="items">
+            <li className="empty">{loadError}</li>
+          </ul>
+        )}
+        {!loadError && posts === null && (
+          <ul className="items">
+            <li className="empty">Loading records…</li>
+          </ul>
+        )}
+        {!loadError && posts !== null && groups.length === 0 && (
+          <ul className="items">
+            <li className="empty">
+              {!isToday
+                ? "Nothing was recorded on this day."
+                : posts.length === 0
+                  ? "Nothing recorded today yet. Take a photo of the first label to start the count."
+                  : "The open bags are empty. Earlier bags are under Show all bags."}
+            </li>
+          </ul>
+        )}
+        {!loadError &&
+          groups.map((g) => {
+            const gLists = listsOf(g.rows);
+            return (
+              <div key={g.key} className="baggroup">
+                {g.title && <div className="baglabel">{g.title}</div>}
+                {gLists.length > 0 && (
+                  <ul className="items lists" aria-label="Company lists">
+                    {gLists.map((l) => {
               const canDelete = l.scannedById === user.id || user.role === "ADMIN";
               return (
                 <li key={l.id}>
@@ -821,20 +953,12 @@ export default function Tally({ today, user }: Props) {
                   </div>
                 </li>
               );
-            })}
-          </ul>
-        )}
-        <ul className="items">
-          {loadError && <li className="empty">{loadError}</li>}
-          {!loadError && posts === null && <li className="empty">Loading records…</li>}
-          {!loadError && posts?.length === 0 && (
-            <li className="empty">
-              {day === today
-                ? "Nothing recorded today yet. Take a photo of the first label to start the count."
-                : "Nothing was recorded on this day."}
-            </li>
-          )}
-          {posts?.map((p) => {
+                    })}
+                  </ul>
+                )}
+                {g.rows.length > 0 && (
+                  <ul className="items">
+                    {g.rows.map((p) => {
             const canDelete = p.scannedById === user.id || user.role === "ADMIN";
             return (
               <li key={p.id}>
@@ -859,8 +983,12 @@ export default function Tally({ today, user }: Props) {
                 </div>
               </li>
             );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
           })}
-        </ul>
       </section>
       </>
       )}

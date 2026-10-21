@@ -126,3 +126,17 @@ ul.items.lists { margin-bottom: 4px; }
 ol.tracklist { margin: 8px 0 0; padding-left: 28px; columns: 2 150px; column-gap: 16px; font-family: var(--f-mono); font-size: 13px; }
 ol.tracklist li { break-inside: avoid; }
 .companyhead span.express { color: var(--exp); } .companyhead span.parcel { color: var(--par); }
+/* Bags */
+.bags { gap: 10px; }
+.bagrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 8px; }
+.bagrow.registered { background: var(--reg-soft); } .bagrow.express { background: var(--exp-soft); }
+.bagrow.registered b { color: var(--reg); } .bagrow.express b { color: var(--exp); }
+.baginfo { display: grid; gap: 2px; font-size: 14px; }
+.baginfo b { font-size: 17px; }
+.closedlist { font-size: 12px; color: var(--muted); }
+.bagactions { display: grid; gap: 4px; justify-items: end; }
+.baggroup { display: grid; gap: 6px; }
+.baggroup + .baggroup { margin-top: 10px; }
+.baglabel { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink); padding: 4px 2px; border-bottom: 2px solid var(--line); }
+.bagcompany { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.bagcompany .cname { font-weight: 600; color: var(--ink); }

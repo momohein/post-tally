@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { PostDTO } from "./posts";
 import { groupByCompany } from "./companies";
+import { bagName, groupByBag } from "./bagNames";
 
 /** Page sizes in PDF points (1 mm = 2.8346 pt). "label" is a 100 × 150 mm (4 × 6 in) thermal label. */
 export const PAGE_SIZES = {
@@ -114,6 +115,14 @@ export async function buildPdf({ office, dayLabel, printedAt, time, rows, size }
       text(line, margin, f.bold, s.body);
       y -= s.body + 3;
       text(`Total ${rows.length} item${rows.length === 1 ? "" : "s"}`, margin, f.bold, s.body);
+      const bags = groupByBag(rows);
+      if (bags.length) {
+        const bagLine = bags.map((g) => `${bagName(g.type, g.bag)}: ${g.rows.length}`).join("   ");
+        for (const line of wrap(f.regular, s.small, bagLine, inner)) {
+          y -= s.small + 4;
+          text(line, margin, f.regular, s.small);
+        }
+      }
       y -= 6;
       rule(1.2);
       y -= s.track + 4;
@@ -142,78 +151,79 @@ export async function buildPdf({ office, dayLabel, printedAt, time, rows, size }
     text("Nothing was recorded on this day.", margin, f.regular, s.body);
   }
 
-  // ---- Company lists: one block per company with its count and every tracking number
-  const companies = groupByCompany(rows);
-  if (companies.length) heading("Company lists");
   const trackW = f.mono.widthOfTextAtSize("RL000000000IE", s.track);
   const gap = big ? 18 : 10;
   const cols = Math.max(1, Math.floor((inner - indent + gap) / (trackW + gap)));
-  for (const c of companies) {
-    const nameLines = wrap(f.bold, s.body, c.name, inner - 70);
-    const countText = `${c.count} ${c.type}`;
-    ensure(nameLines.length * (s.body + 3) + s.track + 10);
-    nameLines.forEach((line, n) => {
-      text(line, margin, f.bold, s.body);
-      if (n === 0) {
-        page.drawText(countText, {
-          x: width - margin - f.bold.widthOfTextAtSize(countText, s.body),
-          y,
-          size: s.body,
-          font: f.bold,
-          color: BLACK,
-        });
-      }
-      y -= s.body + 3;
-    });
-    y -= 3;
-    for (let i = 0; i < c.tracking.length; i += cols) {
-      ensure(s.track + 4);
-      c.tracking.slice(i, i + cols).forEach((t, k) => {
-        page.drawText(safe(f.mono, t), { x: margin + indent + k * (trackW + gap), y, size: s.track, font: f.mono, color: BLACK });
+
+  // ---- One section per bag: Registered bag 1, 2 ... then Express bag 1, 2 ... then Parcel
+  for (const group of groupByBag(rows)) {
+    const bagTitle = `${bagName(group.type, group.bag)} — ${group.rows.length} item${group.rows.length === 1 ? "" : "s"}`;
+    ensure(s.body + s.track + 14);
+    page.drawRectangle({ x: margin, y: y - 4, width: inner, height: s.body + 8, color: BLACK });
+    page.drawText(safe(f.bold, bagTitle.toUpperCase()), { x: margin + 4, y, size: s.body, font: f.bold, color: rgb(1, 1, 1) });
+    y -= s.track + 10;
+
+    // Company lists in this bag: one block per company with its count and every tracking number
+    const companies = groupByCompany(group.rows);
+    const singles = group.rows.filter((r) => !r.listId);
+    if (companies.length && singles.length) heading("Company lists");
+    for (const c of companies) {
+      const nameLines = wrap(f.bold, s.body, c.name, inner - 70);
+      const countText = `${c.count} ${c.type}`;
+      ensure(nameLines.length * (s.body + 3) + s.track + 10);
+      nameLines.forEach((line, n) => {
+        text(line, margin, f.bold, s.body);
+        if (n === 0) {
+          page.drawText(countText, {
+            x: width - margin - f.bold.widthOfTextAtSize(countText, s.body),
+            y,
+            size: s.body,
+            font: f.bold,
+            color: BLACK,
+          });
+        }
+        y -= s.body + 3;
       });
-      // running count at the left so the list can be checked against the sheet
-      text(`${i + 1}.`, margin, f.regular, s.small);
+      y -= 3;
+      for (let i = 0; i < c.tracking.length; i += cols) {
+        ensure(s.track + 4);
+        c.tracking.slice(i, i + cols).forEach((t, k) => {
+          page.drawText(safe(f.mono, t), { x: margin + indent + k * (trackW + gap), y, size: s.track, font: f.mono, color: BLACK });
+        });
+        // running count at the left so the list can be checked against the sheet
+        text(`${i + 1}.`, margin, f.regular, s.small);
+        y -= s.track + 4;
+      }
+      y -= 2;
+      rule(0.4);
       y -= s.track + 4;
     }
-    y -= 2;
-    rule(0.4);
-    y -= s.track + 4;
-  }
 
-  // ---- Single items (photographed or typed in one at a time)
-  const singles = rows.filter((r) => !r.listId);
-  if (singles.length && companies.length) heading("Single items");
-  singles.forEach((r, i) => {
-    const addrLines = r.address ? wrap(f.regular, s.body, r.address, inner - indent) : [];
-    const meta = [time(r.scannedAt), r.scannedBy].filter(Boolean).join(" · ");
-    const metaLines = wrap(f.regular, s.small, meta, inner - indent);
-    ensure(s.track + 4 + addrLines.length * (s.body + 3) + metaLines.length * (s.small + 3) + 8);
+    // Single items in this bag (photographed or typed in one at a time)
+    if (singles.length && companies.length) heading("Single items");
+    singles.forEach((r, i) => {
+      const addrLines = r.address ? wrap(f.regular, s.body, r.address, inner - indent) : [];
+      const meta = [time(r.scannedAt), r.scannedBy].filter(Boolean).join(" · ");
+      const metaLines = wrap(f.regular, s.small, meta, inner - indent);
+      ensure(s.track + 4 + addrLines.length * (s.body + 3) + metaLines.length * (s.small + 3) + 8);
 
-    // Line 1: number, tracking number, service on the right
-    text(`${i + 1}.`, margin, f.bold, s.body);
-    text(r.trackingNumber ?? "No tracking number", margin + indent, f.mono, s.track);
-    const service = r.type.toUpperCase();
-    page.drawText(service, {
-      x: width - margin - f.bold.widthOfTextAtSize(service, s.small),
-      y,
-      size: s.small,
-      font: f.bold,
-      color: BLACK,
+      text(`${i + 1}.`, margin, f.bold, s.body);
+      text(r.trackingNumber ?? "No tracking number", margin + indent, f.mono, s.track);
+      y -= 2;
+      for (const line of addrLines) {
+        y -= s.body + 3;
+        text(line, margin + indent, f.regular, s.body);
+      }
+      for (const line of metaLines) {
+        y -= s.small + 3;
+        text(line, margin + indent, f.regular, s.small);
+      }
+      y -= 6;
+      rule(0.4);
+      y -= s.track + 4;
     });
-    y -= 2;
-
-    for (const line of addrLines) {
-      y -= s.body + 3;
-      text(line, margin + indent, f.regular, s.body);
-    }
-    for (const line of metaLines) {
-      y -= s.small + 3;
-      text(line, margin + indent, f.regular, s.small);
-    }
-    y -= 6;
-    rule(0.4);
-    y -= s.track + 4;
-  });
+    y -= 4;
+  }
 
   // Footer on every page: printed time and page numbers
   pages.forEach((p, n) => {

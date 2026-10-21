@@ -5,6 +5,7 @@ import { currentUser } from "@/lib/auth";
 import { cleanTracking, isS10, SERVICES, toDbType } from "@/lib/classify";
 import { dayOf } from "@/lib/day";
 import { OFFICE_IDS, officeName } from "@/lib/offices";
+import { currentBag } from "@/lib/bags";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,8 @@ export async function POST(req: Request) {
 
   const now = new Date();
   const day = dayOf(now);
+  // The whole list goes into the open bag for its service.
+  const bag = await currentBag(parsed.data.office, day, parsed.data.type);
   try {
     const list = await prisma.postingList.create({
       data: {
@@ -73,6 +76,7 @@ export async function POST(req: Request) {
             type: toDbType(parsed.data.type),
             address: i.address || null,
             office: parsed.data.office,
+            bag,
             day,
             scannedAt: now,
             scannedById: user.id,
@@ -81,7 +85,7 @@ export async function POST(req: Request) {
       },
       include: { _count: { select: { posts: true } } },
     });
-    return NextResponse.json({ id: list.id, count: list._count.posts }, { status: 201 });
+    return NextResponse.json({ id: list.id, count: list._count.posts, bag }, { status: 201 });
   } catch (e) {
     // Someone saved one of these numbers at the same moment.
     if ((e as { code?: string }).code === "P2002") {

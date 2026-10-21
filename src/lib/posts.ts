@@ -6,6 +6,7 @@ export type PostDTO = {
   type: Service;
   address: string | null;
   office: string;
+  bag: number;
   day: string;
   scannedAt: string;
   scannedBy: string;
@@ -20,6 +21,7 @@ type Row = {
   type: string;
   address: string | null;
   office: string;
+  bag: number;
   day: string;
   scannedAt: Date;
   scannedById: string;
@@ -37,6 +39,7 @@ export function toDTO(p: Row): PostDTO {
     type: fromDbType(p.type),
     address: p.address,
     office: p.office,
+    bag: p.bag,
     day: p.day,
     scannedAt: p.scannedAt.toISOString(),
     scannedBy: p.scannedBy.name,

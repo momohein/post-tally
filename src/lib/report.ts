@@ -4,6 +4,7 @@ import { OFFICES, type OfficeId } from "./offices";
 import { PAGE_SIZES, type PageSize } from "./pdf";
 import { dayLabelOf, officeDayPdf } from "./dayPdf";
 import { groupByCompany, type CompanyGroup } from "./companies";
+import { bagName, groupByBag } from "./bagNames";
 
 export class ReportError extends Error {
   constructor(message: string, public status = 500) {
@@ -46,13 +47,15 @@ export async function sendDayReport(day: string, only?: OfficeId) {
   const envSize = process.env.REPORT_PDF_SIZE ?? "label";
   const size: PageSize = envSize in PAGE_SIZES ? (envSize as PageSize) : "label";
 
-  const offices: { id: OfficeId; name: string; registered: number; express: number; parcel: number; total: number; companies: CompanyGroup[] }[] = [];
+  type BagSum = { name: string; count: number; companies: CompanyGroup[] };
+  const offices: { id: OfficeId; name: string; registered: number; express: number; parcel: number; total: number; bags: BagSum[] }[] = [];
   const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
   for (const o of OFFICES.filter((x) => !only || x.id === only)) {
     const { rows, pdf, filename } = await officeDayPdf(o.id, day, size);
     const t = { registered: 0, express: 0, parcel: 0 };
     rows.forEach((r) => t[r.type]++);
-    offices.push({ id: o.id, name: o.name, ...t, total: rows.length, companies: groupByCompany(rows) });
+    const bags = groupByBag(rows).map((g) => ({ name: bagName(g.type, g.bag), count: g.rows.length, companies: groupByCompany(g.rows) }));
+    offices.push({ id: o.id, name: o.name, ...t, total: rows.length, bags });
     attachments.push({ filename, content: Buffer.from(pdf), contentType: "application/pdf" });
   }
 
@@ -60,7 +63,10 @@ export async function sendDayReport(day: string, only?: OfficeId) {
   const title = only ? `${offices[0].name} – ${label}` : label;
   const lines = offices.flatMap((o) => [
     `${o.name}: ${o.total} item${o.total === 1 ? "" : "s"} (Registered ${o.registered}, Express ${o.express}, Parcel ${o.parcel})`,
-    ...o.companies.map((c) => `   ${c.name}: ${c.count} ${c.type} (${c.tracking.join(", ")})`),
+    ...o.bags.flatMap((b) => [
+      `   ${b.name}: ${b.count} item${b.count === 1 ? "" : "s"}`,
+      ...b.companies.map((c) => `      ${c.name}: ${c.count} (${c.tracking.join(", ")})`),
+    ]),
   ]);
   const attachedNote = only ? "The PDF is attached." : "The PDF for each office is attached.";
   const text = [`Post Tally report for ${title}`, "", ...lines, "", attachedNote, "", "Sent automatically by Post Tally."].join("\n");
