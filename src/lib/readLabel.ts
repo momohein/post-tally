@@ -2,18 +2,43 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { classify, cleanTracking, SERVICES, type Service } from "./classify";
 
-const PROMPT = `This is a photo of one postal item (letter, envelope or parcel) at a post office counter.
-Read its label and reply with ONLY a JSON object, no other text:
-{"tracking_number": string or null, "service": "registered" | "express" | "parcel" | "unknown", "address": string or null}
-Rules:
-- tracking_number: the tracking/barcode number printed on the item, usually 2 letters + 9 digits + 2-letter country code (e.g. RR123456789IE). Copy it exactly with no spaces. null if none is visible.
-- service: from the tracking number's first letter if present (R = registered, E = express, C or V = parcel); otherwise from words on the item ("Registered", "Express", "Parcel") or a large box. "unknown" if unclear.
-- address: the DELIVERY (recipient) address only, not the sender's, lines separated by \\n. null if not readable.`;
+const PROMPT = `This is a photo of one postal item (letter, envelope or parcel) at an An Post counter.
+The photo may be sideways or upside down; read the labels in whatever direction they face.
+Read the item and call the record_label tool.
+
+- tracking_number: the tracking number printed beside the barcode, e.g. "LL 2766 4606 9IE" or "RR123456789IE":
+  2 letters + 9 digits + 2-letter country code. Copy it exactly with no spaces. Empty string if none is visible.
+- service: from the label or the tracking number's first letter:
+  R = "registered"; E or L = "express" (red An Post "ExpressPost" labels start with LL); C or V = "parcel".
+  Use "unknown" if you can't tell.
+- address: the DELIVERY (recipient, "To:") address only, never the sender ("From:"), as written,
+  one line per address line. Empty string if it can't be read.`;
+
+/** Forcing a tool call makes the model return structured data instead of free text. */
+const TOOL = {
+  name: "record_label",
+  description: "Record the tracking number, service and delivery address read from one postal item.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      tracking_number: { type: "string", description: "Tracking number with no spaces, or empty string." },
+      service: { type: "string", enum: ["registered", "express", "parcel", "unknown"] },
+      address: { type: "string", description: "Recipient address, one line per address line, or empty string." },
+    },
+    required: ["tracking_number", "service", "address"],
+  },
+};
+
+/** Text, an array of lines, or nothing -> one string (models sometimes return addresses as arrays). */
+export const looseText = z.preprocess(
+  (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").join("\n") : v),
+  z.string().nullable().optional(),
+);
 
 const Reply = z.object({
-  tracking_number: z.string().nullable().optional(),
-  service: z.string().nullable().optional(),
-  address: z.string().nullable().optional(),
+  tracking_number: looseText,
+  service: looseText,
+  address: looseText,
 });
 
 export type LabelReading = {
@@ -38,16 +63,44 @@ export function getClient() {
   return client;
 }
 
-/** Pull the first {...} block out of the model's reply and parse it. */
+/**
+ * Parse the first {...} block in text. Tolerates raw line breaks inside strings
+ * (a multi-line address written out literally), which plain JSON.parse rejects.
+ */
 export function parseJson(text: string): unknown {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  if (start === -1 || end <= start) throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
+  if (start === -1 || end <= start) return null;
+  const raw = text.slice(start, end + 1);
   try {
-    return JSON.parse(text.slice(start, end + 1));
+    return JSON.parse(raw);
   } catch {
-    throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
+    let out = "";
+    let inString = false;
+    let escaped = false;
+    for (const ch of raw) {
+      if (inString && !escaped && (ch === "\n" || ch === "\r" || ch === "\t")) {
+        out += ch === "\n" ? "\\n" : ch === "\t" ? "\\t" : "";
+        continue;
+      }
+      if (ch === '"' && !escaped) inString = !inString;
+      escaped = ch === "\\" && !escaped;
+      out += ch;
+    }
+    try {
+      return JSON.parse(out);
+    } catch {
+      return null;
+    }
   }
+}
+
+/** The structured result: the forced tool call's input, or JSON found in any text as a fallback. */
+export function resultOf(message: Anthropic.Message, toolName: string): unknown {
+  const call = message.content.find((b) => b.type === "tool_use" && b.name === toolName);
+  if (call && call.type === "tool_use") return call.input;
+  const text = message.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+  return parseJson(text);
 }
 
 export async function readLabel(
@@ -56,7 +109,9 @@ export async function readLabel(
 ): Promise<LabelReading> {
   const message = await getClient().messages.create({
     model: process.env.CLAUDE_MODEL || "claude-haiku-5-5",
-    max_tokens: 500,
+    max_tokens: 800,
+    tools: [TOOL],
+    tool_choice: { type: "tool", name: TOOL.name },
     messages: [
       {
         role: "user",
@@ -68,11 +123,11 @@ export async function readLabel(
     ],
   });
 
-  const text = message.content
-    .map((block) => (block.type === "text" ? block.text : ""))
-    .join("");
-  const parsed = Reply.safeParse(parseJson(text));
-  if (!parsed.success) throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
+  const parsed = Reply.safeParse(resultOf(message, TOOL.name));
+  if (!parsed.success) {
+    console.error("read-label: unexpected reply", JSON.stringify(message.content).slice(0, 1500));
+    throw new LabelReadError("The label couldn't be read clearly. Try a sharper photo.");
+  }
 
   const trackingNumber = cleanTracking(parsed.data.tracking_number);
   const address = (parsed.data.address ?? "").trim();

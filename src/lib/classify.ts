@@ -28,7 +28,7 @@ export function s10CheckOk(tracking: string): boolean {
 
 /**
  * Service from the S10 prefix's first letter:
- * R = registered, E = express (EMS), C or V = parcel.
+ * R = registered, E (EMS) or L (letter express, e.g. An Post Express Post "LL...") = express, C or V = parcel.
  * Returns null when the number is not S10 or the prefix is not one of these.
  * Check which prefixes your post office's domestic labels use and adjust here.
  */
@@ -39,6 +39,7 @@ export function classify(input: string | null | undefined): Service | null {
     case "R":
       return "registered";
     case "E":
+    case "L":
       return "express";
     case "C":
     case "V":
