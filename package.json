@@ -13,7 +13,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "add-user": "node scripts/add-user.mjs",
-    "make-admin": "node scripts/make-admin.mjs"
+    "make-admin": "node scripts/make-admin.mjs",
+    "delete-user": "node scripts/delete-user.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.128.0",

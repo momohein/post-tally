@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { isAdminEmail } from "@/lib/admins";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ const Body = z.object({
 
 /**
  * POST /api/register — create a staff login.
- * The very first account becomes the admin; everyone after that is staff.
+ * The very first account, and any email listed in src/lib/admins.ts, becomes an admin; everyone else is staff.
  */
 export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
@@ -27,10 +28,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "An account with this email already exists. Sign in instead." }, { status: 409 });
   }
 
-  const isFirstUser = (await prisma.user.count()) === 0;
+  const isAdmin = (await prisma.user.count()) === 0 || isAdminEmail(email);
   const passwordHash = await bcrypt.hash(password, 12);
   await prisma.user.create({
-    data: { name, email, passwordHash, role: isFirstUser ? "ADMIN" : "STAFF" },
+    data: { name, email, passwordHash, role: isAdmin ? "ADMIN" : "STAFF" },
   });
-  return NextResponse.json({ ok: true, admin: isFirstUser }, { status: 201 });
+  return NextResponse.json({ ok: true, admin: isAdmin }, { status: 201 });
 }

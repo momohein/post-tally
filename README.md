@@ -32,22 +32,16 @@ record and company list is saved under that office, and the totals, log, PDF and
 Staff accounts work at both offices. Tracking numbers are unique across both, so an item can't be counted at
 both branches. To add a branch, add it to `src/lib/offices.ts`.
 
-### Daily report by email
+### Report by email
 
-At about **17:30 Irish time** the app emails **all admin accounts** that day's report: a summary of both offices
-in the message and one PDF per office attached (label size by default; set `REPORT_PDF_SIZE=a4` for A4).
-Add more people with `REPORT_EMAIL` (comma-separated). Admins also see an **Email report** button to send
-the selected day's report straight away.
+Reports are only emailed when an admin presses the **Email report** button: it sends the selected day's
+report to **all admin accounts**, with a summary in the message and one PDF per office attached (label size
+by default; set `REPORT_PDF_SIZE=a4` for A4). Add more people with `REPORT_EMAIL` (comma-separated).
+Nothing is sent automatically.
 
 Setup (Gmail): turn on 2-Step Verification for the Google account, create an App Password at
 https://myaccount.google.com/apppasswords, then set `SMTP_USER` (the Gmail address) and `SMTP_PASS`
-(the 16-letter app password, no spaces). On Vercel also set `CRON_SECRET`; `vercel.json` calls
-`/api/cron/daily-report` at 16:30 and 17:30 UTC; it only sends on the call that is 17:xx in Dublin, so it
-arrives at about 17:30 in both summer and winter time. On a Docker server, call it from cron instead:
-
-```
-30 17 * * * TZ=Europe/Dublin curl -s -H "Authorization: Bearer $CRON_SECRET" https://your-domain/api/cron/daily-report
-```
+(the 16-letter app password, no spaces).
 
 Records are never deleted at the end of a day: each day simply starts from 0, and any earlier day can be
 viewed, printed or emailed again by choosing it in **Day**.
