@@ -167,3 +167,6 @@ ul.tbags li.open::after { content: " ●"; font-size: 10px; vertical-align: midd
   .t span { font-size: 11px; }
   ul.tbags li { font-size: 13px; }
 }
+/* Keep the report preview inside the screen: long company names wrap instead of pushing counts off the edge */
+.report > *, .companies, .company, .bagcompany { min-width: 0; }
+.companyhead .cname { overflow-wrap: anywhere; }

@@ -38,6 +38,8 @@ export async function GET(req: Request) {
     name: bagName(g.type, g.bag),
     count: g.rows.length,
     companies: groupByCompany(g.rows),
+    // Items photographed or typed in one at a time (not from a company list)
+    singles: g.rows.filter((r) => !r.listId).map((r) => r.trackingNumber ?? "No tracking number"),
   }));
 
   const count = (t: string) => rows.filter((r) => r.type === t).length;

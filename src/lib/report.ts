@@ -47,14 +47,19 @@ export async function sendDayReport(day: string, only?: OfficeId) {
   const envSize = process.env.REPORT_PDF_SIZE ?? "label";
   const size: PageSize = envSize in PAGE_SIZES ? (envSize as PageSize) : "label";
 
-  type BagSum = { name: string; count: number; companies: CompanyGroup[] };
+  type BagSum = { name: string; count: number; companies: CompanyGroup[]; singles: string[] };
   const offices: { id: OfficeId; name: string; registered: number; express: number; parcel: number; total: number; bags: BagSum[] }[] = [];
   const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
   for (const o of OFFICES.filter((x) => !only || x.id === only)) {
     const { rows, pdf, filename } = await officeDayPdf(o.id, day, size);
     const t = { registered: 0, express: 0, parcel: 0 };
     rows.forEach((r) => t[r.type]++);
-    const bags = groupByBag(rows).map((g) => ({ name: bagName(g.type, g.bag), count: g.rows.length, companies: groupByCompany(g.rows) }));
+    const bags = groupByBag(rows).map((g) => ({
+      name: bagName(g.type, g.bag),
+      count: g.rows.length,
+      companies: groupByCompany(g.rows),
+      singles: g.rows.filter((r) => !r.listId).map((r) => r.trackingNumber ?? "No tracking number"),
+    }));
     offices.push({ id: o.id, name: o.name, ...t, total: rows.length, bags });
     attachments.push({ filename, content: Buffer.from(pdf), contentType: "application/pdf" });
   }
@@ -66,6 +71,7 @@ export async function sendDayReport(day: string, only?: OfficeId) {
     ...o.bags.flatMap((b) => [
       `   ${b.name}: ${b.count} item${b.count === 1 ? "" : "s"}`,
       ...b.companies.map((c) => `      ${c.name}: ${c.count} (${c.tracking.join(", ")})`),
+      ...(b.singles.length ? [`      Single items: ${b.singles.length} (${b.singles.join(", ")})`] : []),
     ]),
   ]);
   const attachedNote = only ? "The PDF is attached." : "The PDF for each office is attached.";

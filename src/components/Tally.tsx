@@ -340,7 +340,7 @@ export default function Tally({ today, user }: Props) {
     to: string[];
     emailReady: boolean;
     office: OfficeSum;
-    bags: { type: Service; bag: number; name: string; count: number; companies: { name: string; type: Service; count: number; tracking: string[] }[] }[];
+    bags: { type: Service; bag: number; name: string; count: number; companies: { name: string; type: Service; count: number; tracking: string[] }[]; singles: string[] }[];
   };
   const [summary, setSummary] = useState<Summary | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -889,6 +889,19 @@ export default function Tally({ today, user }: Props) {
                             </ol>
                           </div>
                         ))}
+                        {b.singles.length > 0 && (
+                          <div className="bagcompany">
+                            <div className="companyhead">
+                              <span className="cname">Single items</span>
+                              <span className={b.type}>{b.singles.length}</span>
+                            </div>
+                            <ol className="tracklist">
+                              {b.singles.map((t, i) => (
+                                <li key={t + i}>{t}</li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
