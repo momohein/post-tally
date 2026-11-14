@@ -509,23 +509,24 @@ export default function Tally({ today, user }: Props) {
 
       <section aria-label="Totals for this day">
         <div className="tally">
+          {SERVICES.map((s) => (
+            <div key={s} className={`t ${s}`}>
+              <b>{totals[s]}</b>
+              <span>{LABEL[s]}</span>
+            </div>
+          ))}
+        </div>
+        <div className="tally baglists">
           {SERVICES.map((s) => {
-            const bagsOf = groupByBag((posts ?? []).filter((p) => p.type === s));
+            const bagsOf = isBagged(s) ? groupByBag((posts ?? []).filter((p) => p.type === s)) : [];
             return (
-              <div key={s} className={`t ${s}`}>
-                <b>{totals[s]}</b>
-                <span>{LABEL[s]}</span>
-                {isBagged(s) && bagsOf.length > 0 && (
-                  <ul className="tbags" aria-label={`${LABEL[s]} bags`}>
-                    {bagsOf.map((g) => (
-                      <li key={g.bag} className={isToday && g.bag === bags[s] ? "open" : ""}>
-                        <span>Bag {g.bag}:</span>
-                        <em>{g.rows.length}</em>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              <ul key={s} className={`tbags ${s}`} aria-label={`${LABEL[s]} bags`}>
+                {bagsOf.map((g) => (
+                  <li key={g.bag} className={isToday && g.bag === bags[s] ? "open" : ""}>
+                    Bag {g.bag}: <b>{g.rows.length}</b> item{g.rows.length === 1 ? "" : "s"}
+                  </li>
+                ))}
+              </ul>
             );
           })}
         </div>
@@ -582,7 +583,7 @@ export default function Tally({ today, user }: Props) {
               Take photo of label
             </label>
             <input ref={fileRef} id="photo" type="file" accept="image/*" capture="environment" hidden onChange={onPhoto} />
-            <label className="btn ghost big" htmlFor="listPhoto">
+            <label className="btn blue big" htmlFor="listPhoto">
               Take photo of a company list
               <span className="btn-sub">Certificate of posting with many items</span>
             </label>
@@ -818,11 +819,11 @@ export default function Tally({ today, user }: Props) {
           <div className="card reportbar" aria-label="Email report">
             <h2>Daily report</h2>
             <div className="reportbtns">
-              <button className="btn primary" type="button" onClick={emailReport} disabled={sendingReport}>
-                {sendingReport ? "Sending…" : "Send report by email"}
-              </button>
-              <button className="btn ghost" type="button" onClick={() => (summaryOpen ? setSummaryOpen(false) : previewReport())}>
+              <button className="btn gray" type="button" onClick={() => (summaryOpen ? setSummaryOpen(false) : previewReport())}>
                 {summaryOpen ? "Close preview" : "Preview report"}
+              </button>
+              <button className="btn gray" type="button" onClick={emailReport} disabled={sendingReport}>
+                {sendingReport ? "Sending…" : "Email report"}
               </button>
             </div>
           </div>
