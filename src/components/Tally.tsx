@@ -509,12 +509,25 @@ export default function Tally({ today, user }: Props) {
 
       <section aria-label="Totals for this day">
         <div className="tally">
-          {SERVICES.map((s) => (
-            <div key={s} className={`t ${s}`}>
-              <b>{totals[s]}</b>
-              <span>{LABEL[s]}</span>
-            </div>
-          ))}
+          {SERVICES.map((s) => {
+            const bagsOf = groupByBag((posts ?? []).filter((p) => p.type === s));
+            return (
+              <div key={s} className={`t ${s}`}>
+                <b>{totals[s]}</b>
+                <span>{LABEL[s]}</span>
+                {isBagged(s) && bagsOf.length > 0 && (
+                  <ul className="tbags" aria-label={`${LABEL[s]} bags`}>
+                    {bagsOf.map((g) => (
+                      <li key={g.bag} className={isToday && g.bag === bags[s] ? "open" : ""}>
+                        <span>Bag {g.bag}:</span>
+                        <em>{g.rows.length}</em>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="total">
           {count} item{count === 1 ? "" : "s"} recorded
@@ -800,17 +813,20 @@ export default function Tally({ today, user }: Props) {
               </a>
             </div>
           )}
-          {user.role === "ADMIN" && (
-            <div className="exports">
-              <button className="btn ghost small" type="button" onClick={() => (summaryOpen ? setSummaryOpen(false) : previewReport())}>
+        </div>
+        {user.role === "ADMIN" && (
+          <div className="card reportbar" aria-label="Email report">
+            <h2>Daily report</h2>
+            <div className="reportbtns">
+              <button className="btn primary" type="button" onClick={emailReport} disabled={sendingReport}>
+                {sendingReport ? "Sending…" : "Send report by email"}
+              </button>
+              <button className="btn ghost" type="button" onClick={() => (summaryOpen ? setSummaryOpen(false) : previewReport())}>
                 {summaryOpen ? "Close preview" : "Preview report"}
               </button>
-              <button className="btn ghost small" type="button" onClick={emailReport} disabled={sendingReport}>
-                {sendingReport ? "Sending…" : "Email report"}
-              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
         {user.role === "ADMIN" && summaryOpen && (
           <div className="card report" aria-label="Report preview">
             <h2>
@@ -891,7 +907,7 @@ export default function Tally({ today, user }: Props) {
                     ? `Email goes to: ${summary.to.join(", ") || "no one yet"}`
                     : "Email isn't set up yet: add SMTP_USER and SMTP_PASS to the settings."}
                 </div>
-                <button className="btn primary" type="button" onClick={emailReport} disabled={sendingReport || !summary.emailReady}>
+                <button className="btn primary big" type="button" onClick={emailReport} disabled={sendingReport || !summary.emailReady}>
                   {sendingReport ? "Sending…" : "Send this report"}
                 </button>
               </>

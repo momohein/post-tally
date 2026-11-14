@@ -38,6 +38,16 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.role = (user as { role?: "ADMIN" | "STAFF" }).role ?? "STAFF";
+        token.roleAt = Date.now();
+      } else if (token.id && Date.now() - ((token.roleAt as number) ?? 0) > 60_000) {
+        // Re-check the role every minute, so someone made admin sees admin buttons without signing out.
+        try {
+          const u = await prisma.user.findUnique({ where: { id: token.id as string }, select: { role: true } });
+          if (u) token.role = u.role;
+          token.roleAt = Date.now();
+        } catch {
+          // Keep the old role if the database is briefly unreachable.
+        }
       }
       return token;
     },
